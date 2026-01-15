@@ -132,7 +132,8 @@ module REXML
         @tags = []
         @stack = []
         @entities = []
-        @nsstack = []
+        @namespaces = {}
+        @namespaces_restore_stack = []
       end
 
       def position
@@ -226,7 +227,6 @@ module REXML
           when DOCTYPE_START
             base_error_message = "Malformed DOCTYPE"
             @source.match(DOCTYPE_START, true)
-            @nsstack.unshift(curr_ns=Set.new)
             name = parse_name(base_error_message)
             if @source.match(/\A\s*\[/um, true)
               id = [nil, nil, nil]
@@ -317,7 +317,7 @@ module REXML
                 val = attdef[4] if val == "#FIXED "
                 pairs[attdef[0]] = val
                 if attdef[0] =~ /^xmlns:(.*)/
-                  @nsstack[0] << $1
+                  @namespaces[$1] = val
                 end
               end
             end
@@ -354,7 +354,7 @@ module REXML
           @source.read if @source.buffer.size<2
           if @source.buffer[0] == ?<
             if @source.buffer[1] == ?/
-              @nsstack.shift
+              @namespaces_restore_stack.pop
               last_tag = @tags.pop
               md = @source.match( CLOSE_MATCH, true )
               if md and !last_tag
@@ -397,18 +397,18 @@ module REXML
               @document_status = :in_element
               prefixes = Set.new
               prefixes << md[2] if md[2]
-              @nsstack.unshift(curr_ns=Set.new)
-              attributes, closed = parse_attributes(prefixes, curr_ns)
+              push_namespaces_restore
+              attributes, closed = parse_attributes(prefixes)
               # Verify that all of the prefixes have been defined
               for prefix in prefixes
-                unless @nsstack.find{|k| k.member?(prefix)}
+                unless @namespaces.key?(prefix)
                   raise UndefinedNamespaceException.new(prefix,@source,self)
                 end
               end
 
               if closed
                 @closed = md[1]
-                @nsstack.shift
+                pop_namespaces_restore
               else
                 @tags.push( md[1] )
               end
@@ -502,6 +502,32 @@ module REXML
           rv.gsub!( /&amp;/, '&' )
         end
         rv
+      end
+
+      def add_namespace(prefix, uri)
+        @namespaces_restore_stack.last[prefix] = @namespaces[prefix]
+        if uri.nil?
+          @namespaces.delete(prefix)
+        else
+          @namespaces[prefix] = uri
+        end
+      end
+
+      def push_namespaces_restore
+        namespaces_restore = {}
+        @namespaces_restore_stack.push(namespaces_restore)
+        namespaces_restore
+      end
+
+      def pop_namespaces_restore
+        namespaces_restore = @namespaces_restore_stack.pop
+        namespaces_restore.each do |prefix, uri|
+          if uri.nil?
+            @namespaces.delete(prefix)
+          else
+            @namespaces[prefix] = uri
+          end
+        end
       end
 
       def record_entity_expansion
@@ -606,8 +632,9 @@ module REXML
         [:processing_instruction, match_data[1], match_data[2]]
       end
 
-      def parse_attributes(prefixes, curr_ns)
+      def parse_attributes(prefixes)
         attributes = {}
+        expanded_names = {}
         closed = false
         match_data = @source.match(/^(.*?)(\/)?>/um, true)
         if match_data.nil?
@@ -675,7 +702,7 @@ module REXML
                 "(http://www.w3.org/TR/REC-xml-names/#ns-decl)"
               raise REXML::ParseException.new( msg, @source, self)
             end
-            curr_ns << local_part
+            add_namespace(local_part, value)
           elsif prefix
             prefixes << prefix unless prefix == "xml"
           end
@@ -683,6 +710,20 @@ module REXML
           if attributes.has_key?(name)
             msg = "Duplicate attribute #{name.inspect}"
             raise REXML::ParseException.new(msg, @source, self)
+          end
+
+          unless prefix == "xmlns"
+            uri = @namespaces[prefix]
+            expanded_name = [uri, local_part]
+            existing_prefix = expanded_names[expanded_name]
+            if existing_prefix
+              message = "Namespace conflict in adding attribute " +
+                        "\"#{local_part}\": " +
+                        "Prefix \"#{existing_prefix}\" = \"#{uri}\" and " +
+                        "prefix \"#{prefix}\" = \"#{uri}\""
+              raise REXML::ParseException.new(message, @source, self)
+            end
+            expanded_names[expanded_name] = prefix
           end
 
           attributes[name] = value
