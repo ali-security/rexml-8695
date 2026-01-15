@@ -98,5 +98,11 @@ module REXMLTests
       end
       assert_equal( 0, names.length )
     end
+
+    def test_hex_precedding_zero
+      parser = REXML::Parsers::PullParser.new("<root>&#x61;&#0x61;</root>")
+      parser.pull # :start_element
+      assert_equal("a&#0x61;", parser.pull[1]) # :text
+    end
   end
 end

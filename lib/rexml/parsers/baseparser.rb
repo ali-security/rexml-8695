@@ -467,10 +467,14 @@ module REXML
         rv.gsub!( /\r\n?/, "\n" )
         matches = rv.scan( REFERENCE_RE )
         return rv if matches.size == 0
-        rv.gsub!( /&#0*((?:\d+)|(?:x[a-fA-F0-9]+));/ ) {
+        rv.gsub!( /&#((?:\d+)|(?:x[a-fA-F0-9]+));/ ) {
           m=$1
-          m = "0#{m}" if m[0] == ?x
-          [Integer(m)].pack('U*')
+          if m.start_with?("x")
+            code_point = Integer(m[1..-1], 16)
+          else
+            code_point = Integer(m, 10)
+          end
+          [code_point].pack('U*')
         }
         matches.collect!{|x|x[0]}.compact!
         if matches.size > 0
