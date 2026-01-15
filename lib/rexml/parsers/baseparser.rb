@@ -115,6 +115,7 @@ module REXML
       def initialize( source )
         self.stream = source
         @listeners = []
+        @entity_expansion_count = 0
       end
 
       def add_listener( listener )
@@ -122,6 +123,7 @@ module REXML
       end
 
       attr_reader :source
+      attr_reader :entity_expansion_count
 
       def stream=( source )
         @source = SourceFactory.create_from( source )
@@ -438,7 +440,9 @@ module REXML
       def entity( reference, entities )
         value = nil
         value = entities[ reference ] if entities
-        if not value
+        if value
+          record_entity_expansion
+        else
           value = DEFAULT_ENTITIES[ reference ]
           value = value[2] if value
         end
@@ -478,12 +482,17 @@ module REXML
         }
         matches.collect!{|x|x[0]}.compact!
         if matches.size > 0
+          sum = 0
           matches.each do |entity_reference|
             unless filter and filter.include?(entity_reference)
               entity_value = entity( entity_reference, entities )
               if entity_value
                 re = /&#{entity_reference};/
                 rv.gsub!( re, entity_value )
+                sum += rv.bytesize
+                if sum > Security.entity_expansion_text_limit
+                  raise "entity expansion has grown too large"
+                end
               else
                 er = DEFAULT_ENTITIES[entity_reference]
                 rv.gsub!( er[0], er[2] ) if er
@@ -493,6 +502,13 @@ module REXML
           rv.gsub!( /&amp;/, '&' )
         end
         rv
+      end
+
+      def record_entity_expansion
+        @entity_expansion_count += 1
+        if @entity_expansion_count > Security.entity_expansion_limit
+          raise "number of entity expansions exceeded, processing aborted."
+        end
       end
 
       private

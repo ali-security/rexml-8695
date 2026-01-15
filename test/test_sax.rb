@@ -31,6 +31,17 @@ module REXMLTests
       assert_equal '--1234--', results[1]
     end
 
+    def test_characters_predefined_entities
+      source = '<root><a>&lt;P&gt; &lt;I&gt; &lt;B&gt; Text &lt;/B&gt;  &lt;/I&gt;</a></root>'
+
+      sax = Parsers::SAX2Parser.new( source )
+      results = []
+      sax.listen(:characters) {|x| results << x }
+      sax.parse
+
+      assert_equal(["<P> <I> <B> Text </B>  </I>"], results)
+    end
+
     def test_sax2
       File.open(fixture_path("documentation.xml")) do |f|
         parser = Parsers::SAX2Parser.new( f )
@@ -85,6 +96,92 @@ module REXMLTests
         assert_equal 1, tc
         assert_equal 1, start_document
         assert_equal 1, end_document
+      end
+    end
+
+    class EntityExpansionLimitTest < Test::Unit::TestCase
+      def setup
+        @default_entity_expansion_limit = REXML::Security.entity_expansion_limit
+      end
+
+      def teardown
+        REXML::Security.entity_expansion_limit = @default_entity_expansion_limit
+      end
+
+      class GeneralEntityTest < self
+        def test_have_value
+          source = <<-XML
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE member [
+  <!ENTITY a "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">
+  <!ENTITY b "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;">
+  <!ENTITY c "&d;&d;&d;&d;&d;&d;&d;&d;&d;&d;">
+  <!ENTITY d "&e;&e;&e;&e;&e;&e;&e;&e;&e;&e;">
+  <!ENTITY e "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+]>
+<member>
+&a;
+</member>
+          XML
+
+          sax = REXML::Parsers::SAX2Parser.new(source)
+          assert_raise(RuntimeError.new("entity expansion has grown too large")) do
+            sax.parse
+          end
+        end
+
+        def test_empty_value
+          source = <<-XML
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE member [
+  <!ENTITY a "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;">
+  <!ENTITY b "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;">
+  <!ENTITY c "&d;&d;&d;&d;&d;&d;&d;&d;&d;&d;">
+  <!ENTITY d "&e;&e;&e;&e;&e;&e;&e;&e;&e;&e;">
+  <!ENTITY e "">
+]>
+<member>
+&a;
+</member>
+          XML
+
+          sax = REXML::Parsers::SAX2Parser.new(source)
+          assert_raise(RuntimeError.new("number of entity expansions exceeded, processing aborted.")) do
+            sax.parse
+          end
+
+          REXML::Security.entity_expansion_limit = 100
+          sax = REXML::Parsers::SAX2Parser.new(source)
+          assert_raise(RuntimeError.new("number of entity expansions exceeded, processing aborted.")) do
+            sax.parse
+          end
+          assert_equal(101, sax.entity_expansion_count)
+        end
+
+        def test_with_default_entity
+          source = <<-XML
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE member [
+  <!ENTITY a "a">
+  <!ENTITY a2 "&a; &a;">
+]>
+<member>
+&a;
+&a2;
+&lt;
+</member>
+          XML
+
+          REXML::Security.entity_expansion_limit = 4
+          sax = REXML::Parsers::SAX2Parser.new(source)
+          sax.parse
+
+          REXML::Security.entity_expansion_limit = 3
+          sax = REXML::Parsers::SAX2Parser.new(source)
+          assert_raise(RuntimeError.new("number of entity expansions exceeded, processing aborted.")) do
+            sax.parse
+          end
+        end
       end
     end
 
